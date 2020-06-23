@@ -199,6 +199,40 @@ class TestQuantizedOps(TestCase):
                     fn_name, q_op, qY, qY_hat
                 ))
 
+    """Tests the correctness of the quantized::sigmoid op."""
+    @override_qengines
+    @given(X=hu.tensor(shapes=hu.array_shapes(1, 5, 1, 5),
+                       qparams=hu.qparams()))
+    def test_qsigmoid(self, X):
+        sigmoid_test_configs = [
+            {
+                'quantized_fn': [
+                    torch.sigmoid
+                ],
+                'reference_fn': torch.sigmoid,
+                'output_range': (0.0, 1.0),
+                'change_zero_point': True
+            }
+        ]
+        self._test_activation_function(X, 'sigmoid', sigmoid_test_configs)
+
+    """Tests the correctness of the quantized::hardsigmoid op."""
+    @override_qengines
+    @given(X=hu.tensor(shapes=hu.array_shapes(1, 5, 1, 5),
+                       qparams=hu.qparams()))
+    def test_qhardsigmoid(self, X):
+        hardsigmoid_test_configs = [
+            {
+                'quantized_fn': [
+                    torch.nn.quantized.functional.hardsigmoid
+                ],
+                'reference_fn': torch.nn.functional.hardsigmoid,
+                'output_range': (0.0, 1.0),
+                'change_zero_point': True
+            }
+        ]
+        self._test_activation_function(X, 'hardsigmoid', hardsigmoid_test_configs)
+
     """Tests the correctness of the quantized::relu op."""
     @override_qengines
     @given(X=hu.tensor(shapes=hu.array_shapes(1, 5, 1, 5),
@@ -243,40 +277,6 @@ class TestQuantizedOps(TestCase):
             }
         ]
         self._test_activation_function(X, 'relu6', relu6_test_configs)
-
-    """Tests the correctness of the quantized::sigmoid op."""
-    @override_qengines
-    @given(X=hu.tensor(shapes=hu.array_shapes(1, 5, 1, 5),
-                       qparams=hu.qparams()))
-    def test_qsigmoid(self, X):
-        sigmoid_test_configs = [
-            {
-                'quantized_fn': [
-                    torch.sigmoid
-                ],
-                'reference_fn': torch.sigmoid,
-                'output_range': (0.0, 1.0),
-                'change_zero_point': True
-            }
-        ]
-        self._test_activation_function(X, 'sigmoid', sigmoid_test_configs)
-
-    """Tests the correctness of the quantized::hardsigmoid op."""
-    @override_qengines
-    @given(X=hu.tensor(shapes=hu.array_shapes(1, 5, 1, 5),
-                       qparams=hu.qparams()))
-    def test_qhardsigmoid(self, X):
-        hardsigmoid_test_configs = [
-            {
-                'quantized_fn': [
-                    torch.nn.quantized.functional.hardsigmoid
-                ],
-                'reference_fn': torch.nn.functional.hardsigmoid,
-                'output_range': (0.0, 1.0),
-                'change_zero_point': True
-            }
-        ]
-        self._test_activation_function(X, 'hardsigmoid', hardsigmoid_test_configs)
 
     """Tests the correctness of the quantized::relu op."""
     @given(X=hu.tensor(shapes=hu.array_shapes(1, 5, 1, 5),
@@ -323,6 +323,33 @@ class TestQuantizedOps(TestCase):
         qY = torch.nn.quantized.functional.elu(qX, output_scale, output_zero_point, alpha=alpha)
         self.assertEqual(qY, qY_hat,
                          msg="F.elu failed ({} vs {})".format(qY, qY_hat))
+
+
+    """Tests the correctness of the quantized::celu op."""
+    @given(X=hu.tensor(shapes=hu.array_shapes(1, 5, 1, 5),
+                       elements=hu.floats(-1e2, 1e2, allow_nan=False, allow_infinity=False),
+                       qparams=hu.qparams(scale_max=9.999999747378752e-06)),
+           alpha=st.floats(0.01, 100.0, allow_nan=False, allow_infinity=False))
+    def test_qcelu(self, X, alpha):
+        X, (scale, zero_point, torch_type) = X
+
+        X = torch.from_numpy(X)
+        qX = torch.quantize_per_tensor(X, scale=scale, zero_point=zero_point,
+                                       dtype=torch_type)
+        op = torch.nn.quantized.functional.celu
+
+        # calculate ELU(dqX) and quantize
+        dqX = qX.dequantize()
+        dqY_hat = dqX.clone()
+        dqY_hat[dqX < 0] = alpha * (torch.exp(dqY_hat[dqX < 0] / alpha) - 1.)
+        qY_hat = torch.quantize_per_tensor(dqY_hat, scale=scale, zero_point=zero_point,
+                                           dtype=torch_type)
+
+        # test regular
+        qY = op(qX, alpha=alpha)
+        self.assertEqual(qY, qY_hat,
+                         msg="F.celu failed ({} vs {})".format(qY, qY_hat))
+
 
     """Tests the correctness of the quantized::qlayer_norm op."""
     @skipIfNoFBGEMM
